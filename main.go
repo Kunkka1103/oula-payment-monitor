@@ -7,6 +7,7 @@ import (
 	"flag"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -117,7 +118,7 @@ func checkAndAlert(db *sql.DB) {
 	// 如果count为0，每半个小时发送告警，直到查询结果改变
 	if count == 0 {
 		log.Println("查询结果为0，开始告警并每30分钟检查一次")
-		sendAlert("检测到“成功打款”按钮未点击，请点击，谢谢！", true)
+		sendAlert("支付记录未生成，请点击“成功打款”，谢谢！", true)
 
 		// 开始每30分钟的告警任务
 		ticker := time.NewTicker(alertInterval)
@@ -132,7 +133,7 @@ func checkAndAlert(db *sql.DB) {
 				return
 			}
 			log.Println("打款未完成，继续告警...")
-			sendAlert("检测到“成功打款”按钮未点击，请点击，谢谢！", true)
+			sendAlert("支付记录未生成，请点击“成功打款”，谢谢！", true)
 		}
 	} else {
 		log.Println("打款已完成，发送完成通知")
@@ -154,8 +155,9 @@ func sendToRobot(url, message string, needMentions bool) {
 	msg.Text.Content = message
 
 	if needMentions && mentions != "" {
-		msg.At.AtMobiles = append(msg.At.AtMobiles, mentions)
+		msg.At.AtMobiles = parseMentions(mentions)  // 直接赋值，不需要使用 append
 		msg.At.IsAtAll = false
+		log.Printf("将会@以下手机号的用户: %v", msg.At.AtMobiles)
 	}
 
 	payload, err := json.Marshal(msg)
@@ -176,4 +178,17 @@ func sendToRobot(url, message string, needMentions bool) {
 	} else {
 		log.Println("告警消息发送成功")
 	}
+}
+
+// 解析 -mentions 参数为手机号数组并添加 +86
+func parseMentions(mentions string) []string {
+	mobileNumbers := strings.Split(mentions, ",")
+	for i, num := range mobileNumbers {
+		num = strings.TrimSpace(num)
+		if !strings.HasPrefix(num, "+") {
+			// 如果手机号没有以+开头，默认添加 +86
+			mobileNumbers[i] = "+86" + num
+		}
+	}
+	return mobileNumbers
 }
