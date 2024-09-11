@@ -1,25 +1,26 @@
 package main
 
 import (
-	"bytes"
 	"database/sql"
-	"encoding/json"
 	"flag"
 	"log"
-	"net/http"
 	"time"
+	"net/http"
+	"bytes"
+	"encoding/json"
 
 	_ "github.com/lib/pq"
 )
 
 var (
-	dsn         string
-	robot1URL   string
-	robot2URL   string
-	mentions    string
-	checkTime   string
-	interval    time.Duration
+	dsn           string
+	robot1URL     string
+	robot2URL     string
+	mentions      string
+	checkTime     string
+	interval      time.Duration
 	alertInterval time.Duration
+	isCompleted   bool // 标记是否已完成打款
 )
 
 type DingTalkMessage struct {
@@ -53,6 +54,8 @@ func main() {
 	}
 	defer db.Close()
 
+	log.Println("启动定时监控任务...")
+
 	// 每天定时任务
 	for {
 		now := time.Now()
@@ -66,8 +69,14 @@ func main() {
 			nextCheckTime = nextCheckTime.Add(24 * time.Hour)
 		}
 
+		log.Printf("下次检查时间为：%s", nextCheckTime)
+
 		// 等待到达下次检查时间
 		time.Sleep(time.Until(nextCheckTime))
+
+		// 每天初始化完成状态
+		isCompleted = false
+		log.Println("初始化完成状态，开始今日的监控任务")
 
 		// 开始首次监控并定期检查
 		checkAndAlert(db)
@@ -75,12 +84,20 @@ func main() {
 		// 继续每5分钟检查一次
 		ticker := time.NewTicker(interval)
 		for range ticker.C {
+			log.Println("开始下一次定期检查")
 			checkAndAlert(db)
 		}
 	}
 }
 
 func checkAndAlert(db *sql.DB) {
+	// 如果已完成，则不再继续检查
+	if isCompleted {
+		log.Println("打款已完成，今日不再进行检查")
+		return
+	}
+
+	log.Println("执行数据库查询...")
 	// 执行查询
 	var count int
 	query := `
@@ -95,25 +112,37 @@ func checkAndAlert(db *sql.DB) {
 		return
 	}
 
+	log.Printf("查询结果：%d", count)
+
 	// 如果count为0，每半个小时发送告警，直到查询结果改变
 	if count == 0 {
+		log.Println("查询结果为0，开始告警并每30分钟检查一次")
 		sendAlert("今日打款未完成，请尽快处理", true)
+
+		// 开始每30分钟的告警任务
 		ticker := time.NewTicker(alertInterval)
 		for range ticker.C {
+			log.Println("每30分钟定期检查打款状态...")
 			err = db.QueryRow(query).Scan(&count)
 			if err != nil || count != 0 {
 				ticker.Stop()
+				log.Println("打款完成，发送完成通知")
 				sendAlert("今日打款已完成", false)
+				isCompleted = true // 标记为已完成，停止后续检查
 				return
 			}
+			log.Println("打款未完成，继续告警...")
 			sendAlert("今日打款未完成，请尽快处理", true)
 		}
 	} else {
+		log.Println("打款已完成，发送完成通知")
 		sendAlert("今日打款已完成", false)
+		isCompleted = true // 标记为已完成，停止后续检查
 	}
 }
 
 func sendAlert(message string, needMentions bool) {
+	log.Printf("发送告警消息：%s", message)
 	sendToRobot(robot1URL, message, needMentions)
 	sendToRobot(robot2URL, message, false) // 第二个机器人不需要@人
 }
@@ -143,6 +172,8 @@ func sendToRobot(url, message string, needMentions bool) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		log.Println("钉钉响应非200状态：", resp.Status)
+		log.Printf("钉钉响应非200状态：%s", resp.Status)
+	} else {
+		log.Println("告警消息发送成功")
 	}
 }
