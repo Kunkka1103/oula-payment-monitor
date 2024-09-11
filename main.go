@@ -1,13 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"database/sql"
+	"encoding/json"
 	"flag"
 	"log"
-	"time"
 	"net/http"
-	"bytes"
-	"encoding/json"
+	"time"
 
 	_ "github.com/lib/pq"
 )
@@ -117,7 +117,7 @@ func checkAndAlert(db *sql.DB) {
 	// 如果count为0，每半个小时发送告警，直到查询结果改变
 	if count == 0 {
 		log.Println("查询结果为0，开始告警并每30分钟检查一次")
-		sendAlert("今日打款未完成，请尽快处理", true)
+		sendAlert("检测到“成功打款”按钮未点击，请点击，谢谢！", true)
 
 		// 开始每30分钟的告警任务
 		ticker := time.NewTicker(alertInterval)
@@ -132,7 +132,7 @@ func checkAndAlert(db *sql.DB) {
 				return
 			}
 			log.Println("打款未完成，继续告警...")
-			sendAlert("今日打款未完成，请尽快处理", true)
+			sendAlert("检测到“成功打款”按钮未点击，请点击，谢谢！", true)
 		}
 	} else {
 		log.Println("打款已完成，发送完成通知")
