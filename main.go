@@ -71,7 +71,10 @@ func main() {
 		isCompleted = false
 		log.Println("初始化状态，开始今日的监控任务")
 
-		// 每 interval 检查一次
+		// 启动时立即执行一次检查
+		checkAndAlert(db)
+
+		// 启动定时器，按照 interval 定期检查
 		ticker := time.NewTicker(interval)
 		for range ticker.C {
 			if isCompleted {
