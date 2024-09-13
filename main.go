@@ -35,9 +35,9 @@ type DingTalkMessage struct {
 
 func init() {
 	flag.StringVar(&dsn, "dsn", "postgres://user:password@localhost/dbname?sslmode=disable", "PostgreSQL DSN")
-	flag.StringVar(&robot1URL, "robot1", "", "钉钉机器人1的URL")
-	flag.StringVar(&robot2URL, "robot2", "", "钉钉机器人2的URL")
-	flag.StringVar(&mentions, "mentions", "", "需要@的钉钉用户，使用逗号分隔")
+	flag.StringVar(&robot1URL, "robot1", "", "钉钉机器人1的URL (可@群成员)")
+	flag.StringVar(&robot2URL, "robot2", "", "钉钉机器人2的URL (不@群成员)")
+	flag.StringVar(&mentions, "mentions", "", "需要@的钉钉用户手机号，使用逗号分隔，适用于robot1")
 	flag.StringVar(&checkTime, "checkTime", "12:00", "每天开始监控的时间 (格式: HH:MM)")
 	flag.DurationVar(&interval, "interval", 5*time.Minute, "打款未完成时每次检查的间隔时间")
 }
