@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"bytes"
 	"encoding/json"
-
 	_ "github.com/lib/pq"
 )
 
@@ -56,16 +55,15 @@ func main() {
 	log.Println("启动定时监控任务...")
 
 	for {
-		// 获取当前时间和指定的 checktime
 		now := time.Now()
-		nextCheckTime, err := time.ParseInLocation("15:04", checkTime, now.Location())
+		nextCheckTime, err := getNextCheckTime(checkTime)
 		if err != nil {
 			log.Fatal("解析检查时间失败：", err)
 		}
 
-		// 如果下次检查时间已经过去，则设定为今天的下一个检查点，否则等待到指定时间
+		// 如果当前时间在 checktime 之前，等待到指定时间再开始
 		if now.Before(nextCheckTime) {
-			log.Printf("等待到达检查时间：%s", nextCheckTime)
+			log.Printf("当前时间 %v，等待到达检查时间：%v", now, nextCheckTime)
 			time.Sleep(time.Until(nextCheckTime))
 		}
 
@@ -73,7 +71,7 @@ func main() {
 		isCompleted = false
 		log.Println("初始化状态，开始今日的监控任务")
 
-		// 开始检查打款状态
+		// 每 interval 检查一次
 		ticker := time.NewTicker(interval)
 		for range ticker.C {
 			if isCompleted {
@@ -83,7 +81,29 @@ func main() {
 			}
 			checkAndAlert(db)
 		}
+
+		// 等待到第二天再开始检查
+		waitUntilNextDay(nextCheckTime)
 	}
+}
+
+// 获取当天的检查时间
+func getNextCheckTime(checkTime string) (time.Time, error) {
+	now := time.Now()
+	checkTimeToday, err := time.ParseInLocation("15:04", checkTime, now.Location())
+	if err != nil {
+		return time.Time{}, err
+	}
+
+	// 将解析后的时间设置为今天的日期
+	return time.Date(now.Year(), now.Month(), now.Day(), checkTimeToday.Hour(), checkTimeToday.Minute(), 0, 0, now.Location()), nil
+}
+
+// 等待直到第二天的 00:00
+func waitUntilNextDay(nextCheckTime time.Time) {
+	nextDay := time.Date(nextCheckTime.Year(), nextCheckTime.Month(), nextCheckTime.Day()+1, 0, 0, 0, 0, nextCheckTime.Location())
+	log.Printf("等待到第二天 %v", nextDay)
+	time.Sleep(time.Until(nextDay))
 }
 
 func checkAndAlert(db *sql.DB) {
