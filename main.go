@@ -1,14 +1,14 @@
 package main
 
 import (
-	"bytes"
 	"database/sql"
-	"encoding/json"
 	"flag"
 	"log"
-	"net/http"
 	"strings"
 	"time"
+	"net/http"
+	"bytes"
+	"encoding/json"
 
 	_ "github.com/lib/pq"
 )
@@ -21,7 +21,8 @@ var (
 	checkTime     string
 	interval      time.Duration
 	alertInterval time.Duration
-	isCompleted   bool // 标记是否已完成打款
+	isCompleted   bool // 标记是否当天已完成打款
+	alertSent     bool // 标记是否已发送过告警
 )
 
 type DingTalkMessage struct {
@@ -41,8 +42,8 @@ func init() {
 	flag.StringVar(&robot2URL, "robot2", "", "钉钉机器人2的URL")
 	flag.StringVar(&mentions, "mentions", "", "需要@的钉钉用户，使用逗号分隔")
 	flag.StringVar(&checkTime, "checkTime", "12:00", "每天开始监控的时间 (格式: HH:MM)")
-	flag.DurationVar(&interval, "interval", 5*time.Minute, "首次检查后每次查询的间隔时间")
-	flag.DurationVar(&alertInterval, "alertInterval", 30*time.Minute, "如果查询结果为0，告警的间隔时间")
+	flag.DurationVar(&interval, "interval", 5*time.Minute, "打款未完成时每次检查的间隔时间")
+	flag.DurationVar(&alertInterval, "alertInterval", 30*time.Minute, "打款未完成时告警的间隔时间")
 }
 
 func main() {
@@ -75,16 +76,22 @@ func main() {
 		// 等待到达下次检查时间
 		time.Sleep(time.Until(nextCheckTime))
 
-		// 每天初始化完成状态
+		// 初始化状态
 		isCompleted = false
-		log.Println("初始化完成状态，开始今日的监控任务")
+		alertSent = false
+		log.Println("初始化状态，开始今日的监控任务")
 
 		// 开始首次监控并定期检查
 		checkAndAlert(db)
 
-		// 继续每5分钟检查一次
+		// 如果未完成，继续每5分钟检查一次
 		ticker := time.NewTicker(interval)
 		for range ticker.C {
+			if isCompleted {
+				log.Println("今日打款已完成，不再继续检查")
+				ticker.Stop()
+				break
+			}
 			log.Println("开始下一次定期检查")
 			checkAndAlert(db)
 		}
@@ -115,27 +122,24 @@ func checkAndAlert(db *sql.DB) {
 
 	log.Printf("查询结果：%d", count)
 
-	// 如果count为0，每半个小时发送告警，直到查询结果改变
+	// 如果count为0，表示打款未完成
 	if count == 0 {
-		log.Println("查询结果为0，开始告警并每30分钟检查一次")
-		sendAlert("支付记录未生成，请点击“成功打款”，谢谢！", true)
-
-		// 开始每30分钟的告警任务
-		ticker := time.NewTicker(alertInterval)
-		for range ticker.C {
-			log.Println("每30分钟定期检查打款状态...")
-			err = db.QueryRow(query).Scan(&count)
-			if err != nil || count != 0 {
-				ticker.Stop()
-				log.Println("打款完成，发送完成通知")
-				sendAlert("今日打款已完成", false)
-				isCompleted = true // 标记为已完成，停止后续检查
-				return
-			}
-			log.Println("打款未完成，继续告警...")
-			sendAlert("支付记录未生成，请点击“成功打款”，谢谢！", true)
+		if !alertSent {
+			log.Println("打款未完成，发送告警")
+			sendAlert("今日打款未完成，请尽快处理", true)
+			alertSent = true // 记录已发送告警
+		} else {
+			log.Println("打款未完成，但告警已发送，等待30分钟后再次发送")
 		}
+
+		// 每30分钟发送一次告警
+		time.AfterFunc(alertInterval, func() {
+			log.Println("再次检查打款状态...")
+			checkAndAlert(db) // 30分钟后再次检查
+		})
+
 	} else {
+		// 打款已完成，发送消息
 		log.Println("打款已完成，发送完成通知")
 		sendAlert("今日打款已完成", false)
 		isCompleted = true // 标记为已完成，停止后续检查
@@ -155,7 +159,7 @@ func sendToRobot(url, message string, needMentions bool) {
 	msg.Text.Content = message
 
 	if needMentions && mentions != "" {
-		msg.At.AtMobiles = parseMentions(mentions)  // 直接赋值，不需要使用 append
+		msg.At.AtMobiles = parseMentions(mentions)
 		msg.At.IsAtAll = false
 		log.Printf("将会@以下手机号的用户: %v", msg.At.AtMobiles)
 	}
