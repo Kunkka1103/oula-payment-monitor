@@ -99,7 +99,7 @@ func main() {
 }
 
 func checkAndAlert(db *sql.DB) {
-	// 如果已完成，则不再继续检查
+	// 如果当天已完成打款，则不再继续检查
 	if isCompleted {
 		log.Println("打款已完成，今日不再进行检查")
 		return
@@ -122,27 +122,42 @@ func checkAndAlert(db *sql.DB) {
 
 	log.Printf("查询结果：%d", count)
 
-	// 如果count为0，表示打款未完成
+	// 如果打款未完成
 	if count == 0 {
 		if !alertSent {
+			// 首次告警
 			log.Println("打款未完成，发送告警")
 			sendAlert("今日打款未完成，请尽快处理", true)
-			alertSent = true // 记录已发送告警
-		} else {
-			log.Println("打款未完成，但告警已发送，等待30分钟后再次发送")
+			alertSent = true // 标记为已经发送告警
 		}
 
-		// 每30分钟发送一次告警
-		time.AfterFunc(alertInterval, func() {
-			log.Println("再次检查打款状态...")
-			checkAndAlert(db) // 30分钟后再次检查
-		})
-
+		// 开始每30分钟发送告警，直到打款完成
+		ticker := time.NewTicker(alertInterval)
+		go func() {
+			for range ticker.C {
+				log.Println("每30分钟重新检查打款状态并发送告警...")
+				err = db.QueryRow(query).Scan(&count)
+				if err != nil {
+					log.Println("执行查询时出错：", err)
+					continue
+				}
+				if count == 0 {
+					log.Println("打款未完成，发送告警")
+					sendAlert("今日打款未完成，请尽快处理", true)
+				} else {
+					log.Println("打款已完成，发送完成通知")
+					sendAlert("今日打款已完成", false)
+					isCompleted = true // 标记为已完成
+					ticker.Stop() // 停止告警
+					return
+				}
+			}
+		}()
 	} else {
-		// 打款已完成，发送消息
+		// 打款已完成，发送完成消息并停止检查
 		log.Println("打款已完成，发送完成通知")
 		sendAlert("今日打款已完成", false)
-		isCompleted = true // 标记为已完成，停止后续检查
+		isCompleted = true // 标记为已完成
 	}
 }
 
