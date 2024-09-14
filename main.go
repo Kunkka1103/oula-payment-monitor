@@ -1,15 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"database/sql"
+	"encoding/json"
 	"flag"
+	_ "github.com/lib/pq"
 	"log"
+	"net/http"
 	"strings"
 	"time"
-	"net/http"
-	"bytes"
-	"encoding/json"
-	_ "github.com/lib/pq"
 )
 
 var (
@@ -39,7 +39,7 @@ func init() {
 	flag.StringVar(&robot2URL, "robot2", "", "钉钉机器人2的URL (不@群成员)")
 	flag.StringVar(&mentions, "mentions", "", "需要@的钉钉用户手机号，使用逗号分隔，适用于robot1")
 	flag.StringVar(&checkTime, "checkTime", "12:00", "每天开始监控的时间 (格式: HH:MM)")
-	flag.DurationVar(&interval, "interval", 5*time.Minute, "打款未完成时每次检查的间隔时间")
+	flag.DurationVar(&interval, "interval", 30*time.Minute, "打款未完成时每次检查的间隔时间")
 }
 
 func main() {
@@ -78,7 +78,7 @@ func main() {
 		ticker := time.NewTicker(interval)
 		for range ticker.C {
 			if isCompleted {
-				log.Println("今日打款已完成，不再继续检查")
+				log.Println("今日支付记录已经生成，不再继续检查")
 				ticker.Stop()
 				break
 			}
@@ -132,11 +132,11 @@ func checkAndAlert(db *sql.DB) {
 	log.Printf("查询结果：%d", count)
 
 	if count == 0 {
-		log.Println("打款未完成，发送告警")
-		sendAlert("今日打款未完成，请尽快处理", true)
+		log.Println("支付记录未生成，发送告警")
+		sendAlert("支付记录未生成，请点击“成功打款”，谢谢！", true)
 	} else {
-		log.Println("打款已完成，发送完成通知")
-		sendAlert("今日打款已完成", false)
+		log.Println("支付记录已生成，发送完成通知")
+		sendAlert("今日支付记录已生成", false)
 		isCompleted = true // 标记为已完成，停止后续检查
 	}
 }
