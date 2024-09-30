@@ -119,7 +119,7 @@ func checkAndAlert(db *sql.DB) {
 	timeSincePayment := time.Since(paymentTime)
 	log.Printf("距离最近打款时间已过：%v", timeSincePayment)
 	if timeSincePayment < 30*time.Minute {
-		log.Println("最近打款时间在30分钟之内，跳过本次检查")
+		log.Printf("最近打款时间%s 在30分钟之内，跳过本次检查", paymentTime)
 		return
 	}
 
