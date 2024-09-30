@@ -1,14 +1,15 @@
 package main
 
 import (
-	"database/sql"
-	"flag"
-	"log"
-	"time"
-	"net/http"
 	"bytes"
+	"database/sql"
 	"encoding/json"
+	"flag"
+	"fmt"
 	_ "github.com/lib/pq"
+	"log"
+	"net/http"
+	"time"
 )
 
 var (
@@ -156,7 +157,7 @@ func checkAndAlert(db *sql.DB) {
 	// 如果有未完成的打款，发送告警
 	if pendingCount > 0 {
 		log.Println("未完成打款，发送告警")
-		sendAlert("今日仍有未完成的打款，请尽快处理。")
+		sendAlert(fmt.Sprintf("今日仍有未完成的打款，未完成打款记录数：%d", pendingCount))
 	} else {
 		// 如果已完成打款，标记为已完成，停止检查
 		log.Println("所有打款已完成，停止检查")
