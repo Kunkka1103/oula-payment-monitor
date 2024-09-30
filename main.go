@@ -1,25 +1,22 @@
 package main
 
 import (
-	"bytes"
 	"database/sql"
-	"encoding/json"
 	"flag"
-	_ "github.com/lib/pq"
 	"log"
-	"net/http"
-	"strings"
 	"time"
+	"net/http"
+	"bytes"
+	"encoding/json"
+	_ "github.com/lib/pq"
 )
 
 var (
-	dsn         string
-	robot1URL   string
-	robot2URL   string
-	mentions    string
-	checkTime   string
-	interval    time.Duration
-	isCompleted bool // 标记是否当天已完成打款
+	dsn           string
+	robotURL      string
+	checkTime     string
+	interval      time.Duration
+	isCompleted   bool // 标记当天是否已完成打款
 )
 
 type DingTalkMessage struct {
@@ -27,19 +24,13 @@ type DingTalkMessage struct {
 	Text    struct {
 		Content string `json:"content"`
 	} `json:"text"`
-	At struct {
-		AtMobiles []string `json:"atMobiles"`
-		IsAtAll   bool     `json:"isAtAll"`
-	} `json:"at"`
 }
 
 func init() {
 	flag.StringVar(&dsn, "dsn", "postgres://user:password@localhost/dbname?sslmode=disable", "PostgreSQL DSN")
-	flag.StringVar(&robot1URL, "robot1", "", "钉钉机器人1的URL (可@群成员)")
-	flag.StringVar(&robot2URL, "robot2", "", "钉钉机器人2的URL (不@群成员)")
-	flag.StringVar(&mentions, "mentions", "", "需要@的钉钉用户手机号，使用逗号分隔，适用于robot1")
-	flag.StringVar(&checkTime, "checkTime", "12:00", "每天开始监控的时间 (格式: HH:MM)")
-	flag.DurationVar(&interval, "interval", 30*time.Minute, "打款未完成时每次检查的间隔时间")
+	flag.StringVar(&robotURL, "robot", "", "钉钉机器人的URL (不需要@群成员)")
+	flag.StringVar(&checkTime, "checkTime", "11:00", "每天开始监控的时间 (格式: HH:MM)")
+	flag.DurationVar(&interval, "interval", 30*time.Minute, "检查的间隔时间")
 }
 
 func main() {
@@ -78,7 +69,7 @@ func main() {
 		ticker := time.NewTicker(interval)
 		for range ticker.C {
 			if isCompleted {
-				log.Println("今日支付记录已经生成，不再继续检查")
+				log.Println("今日打款已完成，不再继续检查")
 				ticker.Stop()
 				break
 			}
@@ -115,49 +106,63 @@ func checkAndAlert(db *sql.DB) {
 		return
 	}
 
-	log.Println("执行数据库查询...")
-	var count int
-	query := `
-		SELECT count(*)
-		FROM public.distributor
-		WHERE pay_status = 'done'
-		AND DATE(distributor_date) = CURRENT_DATE - INTERVAL '1 day';
-	`
-	err := db.QueryRow(query).Scan(&count)
+	// 查询最新的 payment_time
+	log.Println("查询最近的 payment_time...")
+	var paymentTime time.Time
+	err := db.QueryRow(`SELECT payment_time FROM public.token_payment_detail ORDER BY payment_time DESC LIMIT 1`).Scan(&paymentTime)
 	if err != nil {
-		log.Println("执行查询时出错：", err)
+		log.Println("查询 payment_time 时出错：", err)
 		return
 	}
 
-	log.Printf("查询结果：%d", count)
+	// 检查 payment_time 是否超过半小时
+	timeSincePayment := time.Since(paymentTime)
+	log.Printf("距离最近打款时间已过：%v", timeSincePayment)
+	if timeSincePayment < 30*time.Minute {
+		log.Println("最近打款时间在30分钟之内，跳过本次检查")
+		return
+	}
 
-	if count == 0 {
-		log.Println("支付记录未生成，发送告警")
-		sendAlert("支付记录未生成，请点击“成功打款”，谢谢！", true)
+	// 查询未完成打款的记录数
+	log.Println("查询未完成打款的记录...")
+	var pendingCount int
+	err = db.QueryRow(`
+		SELECT count(*)
+		FROM distributor
+		WHERE id IN (
+			SELECT unnest(distributors)
+			FROM bill_payment
+			WHERE DATE(created_at) = CURRENT_DATE
+		) AND pay_status != 'done';
+	`).Scan(&pendingCount)
+	if err != nil {
+		log.Println("查询未完成打款记录时出错：", err)
+		return
+	}
+
+	log.Printf("未完成打款记录数：%d", pendingCount)
+
+	// 如果有未完成的打款，发送告警
+	if pendingCount > 0 {
+		log.Println("未完成打款，发送告警")
+		sendAlert("今日仍有未完成的打款，请尽快处理。")
 	} else {
-		log.Println("支付记录已生成，发送完成通知")
-		sendAlert("今日支付记录已生成", false)
-		isCompleted = true // 标记为已完成，停止后续检查
+		// 如果已完成打款，标记为已完成，停止检查
+		log.Println("所有打款已完成，停止检查")
+		isCompleted = true
 	}
 }
 
-func sendAlert(message string, needMentions bool) {
+func sendAlert(message string) {
 	log.Printf("发送消息：%s", message)
-	sendToRobot(robot1URL, message, needMentions)
-	sendToRobot(robot2URL, message, false) // 第二个机器人不需要@人
+	sendToRobot(robotURL, message)
 }
 
-func sendToRobot(url, message string, needMentions bool) {
+func sendToRobot(url, message string) {
 	msg := DingTalkMessage{
 		MsgType: "text",
 	}
 	msg.Text.Content = message
-
-	if needMentions && mentions != "" {
-		msg.At.AtMobiles = parseMentions(mentions)
-		msg.At.IsAtAll = false
-		log.Printf("将会@以下手机号的用户: %v", msg.At.AtMobiles)
-	}
 
 	payload, err := json.Marshal(msg)
 	if err != nil {
@@ -177,17 +182,4 @@ func sendToRobot(url, message string, needMentions bool) {
 	} else {
 		log.Println("消息发送成功")
 	}
-}
-
-// 解析 -mentions 参数为手机号数组并添加 +86
-func parseMentions(mentions string) []string {
-	mobileNumbers := strings.Split(mentions, ",")
-	for i, num := range mobileNumbers {
-		num = strings.TrimSpace(num)
-		if !strings.HasPrefix(num, "+") {
-			// 如果手机号没有以+开头，默认添加 +86
-			mobileNumbers[i] = "+86" + num
-		}
-	}
-	return mobileNumbers
 }
