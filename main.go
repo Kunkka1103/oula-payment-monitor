@@ -106,20 +106,31 @@ func checkAndAlert(db *sql.DB) {
 		return
 	}
 
+	// 加载上海时区
+	shanghaiLocation, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		log.Println("加载上海时区失败：", err)
+		return
+	}
+
 	// 查询最新的 payment_time
 	log.Println("查询最近的 payment_time...")
 	var paymentTime time.Time
-	err := db.QueryRow(`SELECT payment_time FROM public.token_payment_detail ORDER BY payment_time DESC LIMIT 1`).Scan(&paymentTime)
+	err = db.QueryRow(`SELECT payment_time FROM public.token_payment_detail ORDER BY payment_time DESC LIMIT 1`).Scan(&paymentTime)
 	if err != nil {
 		log.Println("查询 payment_time 时出错：", err)
 		return
 	}
 
+	// 将 payment_time 转换为上海时间
+	paymentTimeInShanghai := paymentTime.In(shanghaiLocation)
+	log.Printf("最近打款时间（上海时间）：%v", paymentTimeInShanghai)
+
 	// 检查 payment_time 是否超过半小时
-	timeSincePayment := time.Since(paymentTime)
+	timeSincePayment := time.Since(paymentTimeInShanghai)
 	log.Printf("距离最近打款时间已过：%v", timeSincePayment)
 	if timeSincePayment < 30*time.Minute {
-		log.Printf("最近打款时间%s 在30分钟之内，跳过本次检查", paymentTime)
+		log.Printf("最近打款时间%s 在30分钟之内，跳过本次检查", paymentTimeInShanghai)
 		return
 	}
 
@@ -127,14 +138,14 @@ func checkAndAlert(db *sql.DB) {
 	log.Println("查询未完成打款的记录...")
 	var pendingCount int
 	err = db.QueryRow(`
-		SELECT count(*)
-		FROM distributor
-		WHERE id IN (
-			SELECT unnest(distributors)
-			FROM bill_payment
-			WHERE DATE(created_at) = CURRENT_DATE
-		) AND pay_status != 'done';
-	`).Scan(&pendingCount)
+        SELECT count(*)
+        FROM distributor
+        WHERE id IN (
+            SELECT unnest(distributors)
+            FROM bill_payment
+            WHERE DATE(created_at) = CURRENT_DATE
+        ) AND pay_status != 'done';
+    `).Scan(&pendingCount)
 	if err != nil {
 		log.Println("查询未完成打款记录时出错：", err)
 		return
@@ -152,6 +163,7 @@ func checkAndAlert(db *sql.DB) {
 		isCompleted = true
 	}
 }
+
 
 func sendAlert(message string) {
 	log.Printf("发送消息：%s", message)
